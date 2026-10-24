@@ -9,13 +9,32 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Windows Server (baixado da Microsoft e instalado sozinho; versão de avaliação)"
+        description: "Sistema (baixado da Microsoft/Internet Archive pelo dockur e instalado sozinho)"
         type: choice
-        default: "2022"
+        default: "10 - Windows 10 Pro"
         options:
-          - "2025"   # Windows Server 2025
-          - "2022"   # Windows Server 2022
-          - "2019"   # Windows Server 2019
+          # ── Windows 11 ──
+          - "11 - Windows 11 Pro (completo, sem ativação)"
+          - "11l - Windows 11 LTSC (enxuto, suporte longo, avaliação)"
+          - "11e - Windows 11 Enterprise (corporativo, avaliação)"
+          # ── Windows 10 ──
+          - "10 - Windows 10 Pro"
+          - "10l - Windows 10 LTSC (enxuto, suporte longo, avaliação)"
+          - "10e - Windows 10 Enterprise (corporativo, avaliação)"
+          # ── Windows Server (avaliação de 180 dias) ──
+          - "2025 - Windows Server 2025 (mais novo)"
+          - "2022 - Windows Server 2022"
+          - "2019 - Windows Server 2019"
+          - "2016 - Windows Server 2016"
+          - "2012 - Windows Server 2012 (antigo)"
+          - "2008 - Windows Server 2008 (muito antigo)"
+          - "2003 - Windows Server 2003 (muito antigo, leve)"
+          # ── Windows antigos (sem suporte; wallpaper/ativação podem não funcionar) ──
+          - "8e - Windows 8.1 Enterprise (antigo)"
+          - "7u - Windows 7 Ultimate (antigo)"
+          - "vu - Windows Vista Ultimate (antigo)"
+          - "xp - Windows XP Professional (muito antigo, leve)"
+          - "2k - Windows 2000 Professional (muito antigo, sem RDP)"
       username:
         description: "Usuário do Windows (vazio = CrowCloud). Só vale na 1ª instalação"
         type: string
@@ -59,6 +78,17 @@ jobs:
     timeout-minutes: 360
 
     steps:
+      # ─────────────────────────────────────────────
+      # 00. CÓDIGO DA VERSÃO (ex.: "2022 - Windows Server 2022" -> 2022)
+      # ─────────────────────────────────────────────
+      - name: Resolve version code
+        env:
+          IN_VERSION_LABEL: ${{ inputs.version }}
+        run: |
+          CODE="${IN_VERSION_LABEL%% *}"
+          echo "VERSION_CODE=$CODE" >> $GITHUB_ENV
+          echo "Sistema escolhido: $IN_VERSION_LABEL  (código dockur: $CODE)"
+
       # ─────────────────────────────────────────────
       # 0. ARQUIVOS DO WINDOWS (wallpaper + scripts), tudo embutido aqui
       # ─────────────────────────────────────────────
@@ -155,7 +185,7 @@ jobs:
             exit 0
           }
 
-          # Server ja convertido (edicao nao-avaliacao)
+          # Windows 10/11 ou Server ja convertido
           Log "Instalando key e ativando..."
           cscript //nologo C:\Windows\System32\slmgr.vbs /ipk $key | Out-File -Append $log
           Start-Sleep -Seconds 5
@@ -828,9 +858,9 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: /home/runner/rdp-state/system-state.json
-          key: win-state-${{ inputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: win-state-${{ env.VERSION_CODE }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            win-state-${{ inputs.version }}-
+            win-state-${{ env.VERSION_CODE }}-
 
       - name: Init state
         run: |
@@ -866,7 +896,7 @@ jobs:
           os.makedirs(os.path.dirname(p), exist_ok=True)
           json.dump(s, open(p, "w"), indent=2, ensure_ascii=False)
           EOF
-          STATE_FILE=/home/runner/rdp-state/system-state.json python3 /home/runner/state.py init version=${{ inputs.version }}
+          STATE_FILE=/home/runner/rdp-state/system-state.json python3 /home/runner/state.py init version=${{ env.VERSION_CODE }}
 
       # ─────────────────────────────────────────────
       # 2. KVM + DISCO + SWAP
@@ -905,11 +935,11 @@ jobs:
       - name: Restore Windows disk (Release)
         if: ${{ inputs.persist }}
         run: |
-          PREFIX="disk-${{ inputs.version }}-"
+          PREFIX="disk-${{ env.VERSION_CODE }}-"
           TAG=$(gh release list --limit 100 --json tagName,createdAt \
                   --jq "[.[] | select(.tagName | startswith(\"$PREFIX\"))] | sort_by(.createdAt) | reverse | .[0].tagName // empty")
           if [ -z "$TAG" ]; then
-            echo "Nenhum disco salvo para ${{ inputs.version }} (primeira vez: o Windows será instalado)."
+            echo "Nenhum disco salvo para ${{ env.VERSION_CODE }} (primeira vez: o Windows será instalado)."
             exit 0
           fi
           echo "Restaurando disco da release: $TAG"
@@ -929,7 +959,7 @@ jobs:
       - name: Connect Tailscale
         run: |
           curl -fsSL https://tailscale.com/install.sh | sh
-          sudo tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-${{ inputs.version }}-${{ github.run_id }}
+          sudo tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-${{ env.VERSION_CODE }}-${{ github.run_id }}
           for i in $(seq 1 15); do
             TS_IP=$(tailscale ip -4 2>/dev/null | head -1)
             [ -n "$TS_IP" ] && break
@@ -945,7 +975,7 @@ jobs:
       # ─────────────────────────────────────────────
       - name: Start Windows container
         env:
-          IN_VERSION: ${{ inputs.version }}
+          IN_VERSION: ${{ env.VERSION_CODE }}
           IN_USER: ${{ inputs.username }}
           IN_PASS: ${{ inputs.password }}
           IN_RAM: ${{ inputs.ram }}
@@ -1079,7 +1109,7 @@ jobs:
           if [ ! -f /mnt/windows/data.img ] && [ -z "$(ls -A /mnt/windows 2>/dev/null)" ]; then
             echo "Disco vazio, nada a salvar."; exit 0
           fi
-          PREFIX="disk-${{ inputs.version }}-"
+          PREFIX="disk-${{ env.VERSION_CODE }}-"
           NEWTAG="${PREFIX}${{ github.run_id }}"
           rm -rf /mnt/parts; mkdir -p /mnt/parts
 
@@ -1089,7 +1119,7 @@ jobs:
 
           echo "Enviando para a release $NEWTAG..."
           gh release create "$NEWTAG" /mnt/parts/win.tar.zst.part* \
-            --title "Disco do Windows (${{ inputs.version }}) — run ${{ github.run_id }}" \
+            --title "Disco do Windows (${{ env.VERSION_CODE }}) — run ${{ github.run_id }}" \
             --notes "Disco da VM salvo automaticamente (apps e dados). Não apague: é restaurado na próxima execução." \
             --prerelease --latest=false
 
@@ -1107,13 +1137,13 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: /home/runner/rdp-state/system-state.json
-          key: win-state-${{ inputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: win-state-${{ env.VERSION_CODE }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Upload state artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: system-state-${{ inputs.version }}
+          name: system-state-${{ env.VERSION_CODE }}
           path: /home/runner/rdp-state/system-state.json
           retention-days: 30
 
